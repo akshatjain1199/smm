@@ -1,0 +1,96 @@
+trigger: none
+pr: none
+
+parameters:
+- name: runFunctional
+  displayName: Run QA API and ePost functional test
+  type: boolean
+  default: false
+- name: testName
+  displayName: NUnit test name
+  type: string
+  default: TC_RXCORE_001_NewPatient_OneRx_CPD
+- name: epostEnvironment
+  displayName: ePost environment
+  type: string
+  default: QA3
+  values: [QA1, QA2, QA3]
+
+pool:
+  name: QualityEnablement
+
+variables:
+- group: BATS_Testing
+- name: BuildConfiguration
+  value: Release
+
+steps:
+- task: UseDotNet@2
+  displayName: Use .NET 8 SDK
+  inputs:
+    packageType: sdk
+    version: 8.x
+
+- task: DotNetCoreCLI@2
+  displayName: Restore packages
+  inputs:
+    command: restore
+    projects: EpostRxCoreAutomation.sln
+
+- task: DotNetCoreCLI@2
+  displayName: Build solution
+  inputs:
+    command: build
+    projects: EpostRxCoreAutomation.sln
+    arguments: --configuration $(BuildConfiguration) --no-restore
+
+- task: DotNetCoreCLI@2
+  displayName: Run safe framework self-tests
+  inputs:
+    command: test
+    projects: EpostRxCoreAutomation.sln
+    arguments: >-
+      --configuration $(BuildConfiguration)
+      --no-build
+      --settings EpostRxCore.runsettings
+      --filter "TestCategory=SelfTest"
+      --logger "trx;LogFileName=self-tests.trx"
+
+- task: DotNetCoreCLI@2
+  displayName: Run selected RxCore functional test
+  condition: and(succeeded(), eq('${{ parameters.runFunctional }}', true))
+  env:
+    EPOST_ENVIRONMENT: ${{ parameters.epostEnvironment }}
+    EPOST_API_BEARER_TOKEN: $(EPOST_API_BEARER_TOKEN)
+    EPOST_API_CLIENT_ID: $(EPOST_API_CLIENT_ID)
+    EPOST_API_CLIENT_SECRET: $(EPOST_API_CLIENT_SECRET)
+    EPOST_API_SCOPE: $(EPOST_API_SCOPE)
+    EPOST_PIS_API_KEY: $(EPOST_PIS_API_KEY)
+    EPOST_USERNAME: $(EPOST_USERNAME)
+    EPOST_PASSWORD: $(EPOST_PASSWORD)
+    EPOST_SITE_PIN: $(EPOST_SITE_PIN)
+    EPOST_IE_DRIVER_DIRECTORY: $(EPOST_IE_DRIVER_DIRECTORY)
+  inputs:
+    command: test
+    projects: EpostRxCoreAutomation.sln
+    arguments: >-
+      --configuration $(BuildConfiguration)
+      --no-build
+      --settings EpostRxCore.runsettings
+      --filter "Name=${{ parameters.testName }}"
+      --logger "trx;LogFileName=functional.trx"
+
+- task: PublishTestResults@2
+  displayName: Publish NUnit results
+  condition: always()
+  inputs:
+    testResultsFormat: VSTest
+    testResultsFiles: '**/*.trx'
+    failTaskOnFailedTests: true
+
+- task: PublishPipelineArtifact@1
+  displayName: Publish HTML reports and screenshots
+  condition: always()
+  inputs:
+    targetPath: TestResults
+    artifact: EpostRxCore-TestResults
